@@ -53,11 +53,11 @@ WSGI_APPLICATION = 'backend_cigem.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ.get('MYSQL_DATABASE', os.environ.get('DB_NAME')),
-        'USER': os.environ.get('MYSQLUSER', os.environ.get('DB_USER')),
-        'PASSWORD': os.environ.get('MYSQLPASSWORD', os.environ.get('DB_PASSWORD')),
-        'HOST': os.environ.get('MYSQLHOST', os.environ.get('DB_HOST')),
-        'PORT': os.environ.get('MYSQLPORT', os.environ.get('DB_PORT')),
+        'NAME': os.environ.get('MYSQL_DATABASE') or os.environ.get('DB_NAME') or 'cigem_db',
+        'USER': os.environ.get('MYSQLUSER') or os.environ.get('DB_USER') or 'root',
+        'PASSWORD': os.environ.get('MYSQLPASSWORD') or os.environ.get('DB_PASSWORD') or '',
+        'HOST': os.environ.get('MYSQLHOST') or os.environ.get('DB_HOST') or 'localhost',
+        'PORT': os.environ.get('MYSQLPORT') or os.environ.get('DB_PORT') or '3306',
     }
 }
 
