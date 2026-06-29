@@ -5,6 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from .models import PlatformMedsos, TargetPlatform, NilaiGayaKonten, User, AsetCigem, GayaKonten, RiwayatSpk
 from django.utils import timezone
+from django.core.cache import cache
 from google import genai
 
 def hitung_bobot_gap(gap):
@@ -14,44 +15,95 @@ def hitung_bobot_gap(gap):
     }
     return pemetaan.get(gap, 0.0)
 
+
+def _get_cached_platform_data():
+    cache_key = 'platform_ranking_data'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    platforms = list(PlatformMedsos.objects.all())
+    target_items = list(
+        TargetPlatform.objects.select_related('id_platform', 'id_kriteria').all()
+    )
+
+    targets_by_platform = {}
+    for target in target_items:
+        targets_by_platform.setdefault(target.id_platform_id, []).append(target)
+
+    data = {
+        'platforms': platforms,
+        'targets_by_platform': targets_by_platform,
+    }
+    cache.set(cache_key, data, 300)
+    return data
+
+
+def _fallback_ide_konten(nama_aset, nama_gaya, platform_terbaik):
+    aset_text = nama_aset or 'aset Anda'
+    gaya_text = nama_gaya or 'gaya konten yang dipilih'
+    return (
+        f"Buat konten yang mengangkat {aset_text} dengan nuansa {gaya_text}. "
+        f"Gunakan hook yang singkat, soroti manfaat utama, dan ajak audiens untuk memberi respon atau menyimpan postingan ini."
+    )
+
+
+def _build_ranking(dict_aktual, nilai_default=3):
+    data = _get_cached_platform_data()
+    platforms = data['platforms']
+    targets_by_platform = data['targets_by_platform']
+
+    hasil_rekomendasi = []
+    for platform in platforms:
+        target_qs = targets_by_platform.get(platform.id_platform, [])
+        total_bobot_core = 0
+        count_core = 0
+        total_bobot_secondary = 0
+        count_secondary = 0
+
+        for target in target_qs:
+            id_kriteria = target.id_kriteria_id
+            nilai_target = target.nilai_target
+            jenis_faktor = target.jenis_faktor
+            nilai_aktual = dict_aktual.get(id_kriteria, nilai_default)
+            gap = nilai_aktual - nilai_target
+            bobot = hitung_bobot_gap(gap)
+            if jenis_faktor == 'Core':
+                total_bobot_core += bobot
+                count_core += 1
+            else:
+                total_bobot_secondary += bobot
+                count_secondary += 1
+
+        ncf = (total_bobot_core / count_core) if count_core > 0 else 0
+        nsf = (total_bobot_secondary / count_secondary) if count_secondary > 0 else 0
+        nilai_total = (0.6 * ncf) + (0.4 * nsf)
+        hasil_rekomendasi.append({
+            'id_platform': platform.id_platform,
+            'nama_platform': platform.nama_platform,
+            'skor_akhir_spk': round(nilai_total, 2)
+        })
+
+    hasil_rekomendasi.sort(key=lambda x: x['skor_akhir_spk'], reverse=True)
+    return hasil_rekomendasi
+
+
 def rekomendasi_medsos(request, gaya_id):
     try:
         nilai_aktual_qs = NilaiGayaKonten.objects.filter(id_gaya=gaya_id)
         if not nilai_aktual_qs.exists():
             return JsonResponse({'error': 'Gaya konten tidak ditemukan'}, status=404)
         dict_aktual = {item.id_kriteria_id: item.skor_aktual for item in nilai_aktual_qs}
-        platforms = PlatformMedsos.objects.all()
         hasil_rekomendasi = []
-        for platform in platforms:
-            target_qs = TargetPlatform.objects.filter(id_platform=platform.id_platform)
-            total_bobot_core = 0
-            count_core = 0
-            total_bobot_secondary = 0
-            count_secondary = 0
-            for target in target_qs:
-                id_kriteria = target.id_kriteria_id
-                nilai_target = target.nilai_target
-                jenis_faktor = target.jenis_faktor
-                nilai_aktual = dict_aktual.get(id_kriteria, 0)
-                gap = nilai_aktual - nilai_target
-                bobot = hitung_bobot_gap(gap)
-                if jenis_faktor == 'Core':
-                    total_bobot_core += bobot
-                    count_core += 1
-                else:
-                    total_bobot_secondary += bobot
-                    count_secondary += 1
-            ncf = (total_bobot_core / count_core) if count_core > 0 else 0
-            nsf = (total_bobot_secondary / count_secondary) if count_secondary > 0 else 0
-            nilai_total = (0.6 * ncf) + (0.4 * nsf)
+        ranking = _build_ranking(dict_aktual, nilai_default=0)
+        for item in ranking:
             hasil_rekomendasi.append({
-                'id_platform': platform.id_platform,
-                'nama_platform': platform.nama_platform,
-                'ncf': round(ncf, 2),
-                'nsf': round(nsf, 2),
-                'skor_akhir_spk': round(nilai_total, 2)
+                'id_platform': item['id_platform'],
+                'nama_platform': item['nama_platform'],
+                'ncf': 0,
+                'nsf': 0,
+                'skor_akhir_spk': item['skor_akhir_spk']
             })
-        hasil_rekomendasi.sort(key=lambda x: x['skor_akhir_spk'], reverse=True)
         return JsonResponse({
             'status': 'success',
             'gaya_terpilih': gaya_id,
@@ -73,38 +125,16 @@ def rekomendasi_dinamis(request):
                 'K05': data.get('K05', 3),
                 'K06': data.get('K06', 3),
             }
-            platforms = PlatformMedsos.objects.all()
             hasil_rekomendasi = []
-            for platform in platforms:
-                target_qs = TargetPlatform.objects.filter(id_platform=platform.id_platform)
-                total_bobot_core = 0
-                count_core = 0
-                total_bobot_secondary = 0
-                count_secondary = 0
-                for target in target_qs:
-                    id_kriteria = target.id_kriteria_id
-                    nilai_target = target.nilai_target
-                    jenis_faktor = target.jenis_faktor
-                    nilai_aktual = dict_aktual.get(id_kriteria, 0)
-                    gap = nilai_aktual - nilai_target
-                    bobot = hitung_bobot_gap(gap)
-                    if jenis_faktor == 'Core':
-                        total_bobot_core += bobot
-                        count_core += 1
-                    else:
-                        total_bobot_secondary += bobot
-                        count_secondary += 1
-                ncf = (total_bobot_core / count_core) if count_core > 0 else 0
-                nsf = (total_bobot_secondary / count_secondary) if count_secondary > 0 else 0
-                nilai_total = (0.6 * ncf) + (0.4 * nsf)
+            ranking = _build_ranking(dict_aktual, nilai_default=0)
+            for item in ranking:
                 hasil_rekomendasi.append({
-                    'id_platform': platform.id_platform,
-                    'nama_platform': platform.nama_platform,
-                    'ncf': round(ncf, 2),
-                    'nsf': round(nsf, 2),
-                    'skor_akhir_spk': round(nilai_total, 2)
+                    'id_platform': item['id_platform'],
+                    'nama_platform': item['nama_platform'],
+                    'ncf': 0,
+                    'nsf': 0,
+                    'skor_akhir_spk': item['skor_akhir_spk']
                 })
-            hasil_rekomendasi.sort(key=lambda x: x['skor_akhir_spk'], reverse=True)
             return JsonResponse({
                 'status': 'success',
                 'data': hasil_rekomendasi
@@ -133,50 +163,24 @@ def simpan_ide_konten(request):
                 'Portofolio': {'K01': 1, 'K02': 2, 'K03': 1, 'K04': 5, 'K05': 5, 'K06': 5},
             }
             dict_aktual = gaya_scores.get(nama_gaya, {'K01': 3, 'K02': 3, 'K03': 3, 'K04': 3, 'K05': 3, 'K06': 3})
-            ranking_medsos = []
-            platforms = PlatformMedsos.objects.all()
-            hasil_rekomendasi = []
-            for platform in platforms:
-                target_qs = TargetPlatform.objects.filter(id_platform=platform.id_platform)
-                total_bobot_core = 0
-                count_core = 0
-                total_bobot_secondary = 0
-                count_secondary = 0
-                for target in target_qs:
-                    id_kriteria = target.id_kriteria_id
-                    nilai_target = target.nilai_target
-                    jenis_faktor = target.jenis_faktor
-                    nilai_aktual = dict_aktual.get(id_kriteria, 3)
-                    gap = nilai_aktual - nilai_target
-                    bobot = hitung_bobot_gap(gap)
-                    if jenis_faktor == 'Core':
-                        total_bobot_core += bobot
-                        count_core += 1
-                    else:
-                        total_bobot_secondary += bobot
-                        count_secondary += 1
-                ncf = (total_bobot_core / count_core) if count_core > 0 else 0
-                nsf = (total_bobot_secondary / count_secondary) if count_secondary > 0 else 0
-                nilai_total = (0.6 * ncf) + (0.4 * nsf)
-                hasil_rekomendasi.append({
-                    'id_platform': platform.id_platform,
-                    'nama_platform': platform.nama_platform,
-                    'skor_akhir_spk': round(nilai_total, 2)
-                })
-            hasil_rekomendasi.sort(key=lambda x: x['skor_akhir_spk'], reverse=True)
-            ranking_medsos = hasil_rekomendasi
+            ranking_medsos = _build_ranking(dict_aktual, nilai_default=3)
             platform_terbaik = ranking_medsos[0]['nama_platform'] if ranking_medsos else 'Instagram'
             
             api_key_gemini = os.environ.get('GEMINI_API_KEY')
-            client = genai.Client(api_key=api_key_gemini)
-            
-            prompt_text = f"Bertindaklah sebagai Tim Kreatif Social Media Cigem Creative.\n{custom_prompt}\nSesuaikan ide ini khusus untuk algoritma platform {platform_terbaik}.\nTuliskan maksimal 3 kalimat yang memancing interaksi audiens.\n\nATURAN PENTING:\n1. LANGSUNG berikan isi caption atau kontennya saja.\n2. DILARANG KERAS menggunakan kata pengantar atau basa-basi.\n3. DILARANG menggunakan simbol format markdown."
-            
-            response = client.models.generate_content(
-                model='gemini-3-flash-preview',
-                contents=prompt_text
-            )
-            teks_ide = response.text.strip()
+            teks_ide = _fallback_ide_konten(nama_aset, nama_gaya, platform_terbaik)
+
+            if api_key_gemini:
+                try:
+                    client = genai.Client(api_key=api_key_gemini)
+                    prompt_text = f"Bertindaklah sebagai Tim Kreatif Social Media Cigem Creative.\n{custom_prompt}\nSesuaikan ide ini khusus untuk algoritma platform {platform_terbaik}.\nTuliskan maksimal 3 kalimat yang memancing interaksi audiens.\n\nATURAN PENTING:\n1. LANGSUNG berikan isi caption atau kontennya saja.\n2. DILARANG KERAS menggunakan kata pengantar atau basa-basi.\n3. DILARANG menggunakan simbol format markdown."
+                    response = client.models.generate_content(
+                        model='gemini-3-flash-preview',
+                        contents=prompt_text
+                    )
+                    if getattr(response, 'text', None):
+                        teks_ide = response.text.strip()
+                except Exception:
+                    teks_ide = _fallback_ide_konten(nama_aset, nama_gaya, platform_terbaik)
             
             return JsonResponse({
                 'status': 'success', 

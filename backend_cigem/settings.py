@@ -9,6 +9,8 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-vh80^c#x4&(s)b)4wt6os
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = ['*', 'surpass-malt-tapioca.ngrok-free.dev', 'localhost', '127.0.0.1', 'cigemuniverse.up.railway.app']
 CSRF_TRUSTED_ORIGINS = ['https://cigemuniverse.up.railway.app']
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -60,6 +62,7 @@ DATABASES = {
         'PASSWORD': os.environ.get('MYSQLPASSWORD', ''),
         'HOST': os.environ.get('MYSQLHOST', '127.0.0.1'),
         'PORT': os.environ.get('MYSQLPORT', '3306'),
+        'CONN_MAX_AGE': 60,
     }
 }
 
@@ -78,8 +81,8 @@ STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOW_ALL_ORIGINS = True
-# TAMBAHKAN BARIS INI DI PALING BAWAH:
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+WHITENOISE_MAX_AGE = 31536000
 
 # CSRF and Cookie Settings for Railway Deployment
 CSRF_COOKIE_SECURE = False
