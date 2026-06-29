@@ -7,6 +7,7 @@ from django.http import JsonResponse
 from .models import PlatformMedsos, TargetPlatform, NilaiGayaKonten, User, AsetCigem, GayaKonten, RiwayatSpk
 from django.utils import timezone
 from django.core.cache import cache
+from datetime import datetime, timedelta
 
 def hitung_bobot_gap(gap):
     pemetaan = {
@@ -40,10 +41,11 @@ def _get_cached_platform_data():
 
 
 def _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbaik):
+    """Generate content ideas from AI only - no caching, no fallback, pure AI."""
     api_key_gemini = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
     if not api_key_gemini:
         raise RuntimeError('GEMINI_API_KEY belum dikonfigurasi di environment Railway')
-
+    
     prompt_text = (
         f"Bertindaklah sebagai Tim Kreatif Social Media Cigem Creative.\n"
         f"{custom_prompt}\n"
@@ -55,13 +57,7 @@ def _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbai
         f"3. DILARANG menggunakan simbol format markdown."
     )
 
-    cache_key = 'gemini_ide:' + hashlib.sha256(prompt_text.encode('utf-8')).hexdigest()
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
-
     from google import genai
-
     client = genai.Client(api_key=api_key_gemini)
     response = client.models.generate_content(
         model=os.environ.get('GEMINI_MODEL', 'gemini-2.0-flash'),
@@ -70,8 +66,7 @@ def _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbai
     teks_ide = getattr(response, 'text', '').strip()
     if not teks_ide:
         raise RuntimeError('Gemini tidak mengembalikan konten')
-
-    cache.set(cache_key, teks_ide, 900)
+    
     return teks_ide
 
 
@@ -193,10 +188,8 @@ def simpan_ide_konten(request):
             ranking_medsos = _build_ranking(dict_aktual, nilai_default=3)
             platform_terbaik = ranking_medsos[0]['nama_platform'] if ranking_medsos else 'Instagram'
             
-            try:
-                teks_ide = _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbaik)
-            except Exception as ai_error:
-                return JsonResponse({'status': 'error', 'error': str(ai_error)}, status=502)
+            # Generate content ideas from AI only
+            teks_ide = _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbaik)
             
             return JsonResponse({
                 'status': 'success', 
@@ -204,7 +197,11 @@ def simpan_ide_konten(request):
                 'ranking': ranking_medsos
             })
         except Exception as e:
-            return JsonResponse({'status': 'error', 'error': str(e)}, status=500)
+            traceback.print_exc()
+            return JsonResponse({
+                'status': 'error', 
+                'error': str(e)
+            }, status=500)
     return JsonResponse({'error': 'Method not allowed'}, status=405)
 
 @csrf_exempt
