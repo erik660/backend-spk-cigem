@@ -9,6 +9,9 @@ class User(models.Model):
     class Meta:
         db_table = 'user'
 
+    def __str__(self):
+        return self.nama_lengkap
+
 class PlatformMedsos(models.Model):
     id_platform = models.AutoField(primary_key=True)
     nama_platform = models.CharField(max_length=100)
@@ -16,12 +19,18 @@ class PlatformMedsos(models.Model):
     class Meta:
         db_table = 'platform_medsos'
 
+    def __str__(self):
+        return self.nama_platform
+
 class Kriteria(models.Model):
     id_kriteria = models.CharField(max_length=50, primary_key=True)
     nama_kriteria = models.CharField(max_length=150)
 
     class Meta:
         db_table = 'kriteria'
+
+    def __str__(self):
+        return self.nama_kriteria
 
 class AsetCigem(models.Model):
     KATEGORI_CHOICES = [
@@ -36,12 +45,18 @@ class AsetCigem(models.Model):
     class Meta:
         db_table = 'aset_cigem'
 
+    def __str__(self):
+        return self.nama_aset
+
 class GayaKonten(models.Model):
     id_gaya = models.AutoField(primary_key=True)
     nama_gaya = models.CharField(max_length=100)
 
     class Meta:
         db_table = 'gaya_konten'
+
+    def __str__(self):
+        return self.nama_gaya
 
 class TargetPlatform(models.Model):
     JENIS_FAKTOR_CHOICES = [
@@ -57,6 +72,9 @@ class TargetPlatform(models.Model):
     class Meta:
         db_table = 'target_platform'
 
+    def __str__(self):
+        return f"{self.id_platform.nama_platform} - {self.id_kriteria.nama_kriteria}"
+
 class NilaiGayaKonten(models.Model):
     id_nilai_gaya = models.AutoField(primary_key=True)
     id_gaya = models.ForeignKey(GayaKonten, on_delete=models.CASCADE, db_column='id_gaya')
@@ -65,6 +83,9 @@ class NilaiGayaKonten(models.Model):
 
     class Meta:
         db_table = 'nilai_gaya_konten'
+
+    def __str__(self):
+        return f"{self.id_gaya.nama_gaya} - {self.id_kriteria.nama_kriteria}"
 
 class RiwayatSpk(models.Model):
     id_riwayat = models.AutoField(primary_key=True)
@@ -80,6 +101,9 @@ class RiwayatSpk(models.Model):
     class Meta:
         db_table = 'riwayat_spk'
 
+    def __str__(self):
+        return f"Riwayat {self.id_riwayat} - {self.id_user.nama_lengkap}"
+
 class DetailRiwayatAset(models.Model):
     id_detail = models.AutoField(primary_key=True)
     id_riwayat = models.ForeignKey(RiwayatSpk, on_delete=models.CASCADE, db_column='id_riwayat')
@@ -87,6 +111,9 @@ class DetailRiwayatAset(models.Model):
 
     class Meta:
         db_table = 'detail_riwayat_aset'
+
+    def __str__(self):
+        return f"Riwayat {self.id_riwayat.id_riwayat} - {self.id_aset.nama_aset}"
 
 class EvaluasiKonten(models.Model):
     STATUS_CHOICES = [
@@ -102,3 +129,6 @@ class EvaluasiKonten(models.Model):
 
     class Meta:
         db_table = 'evaluasi_konten'
+
+    def __str__(self):
+        return f"Evaluasi {self.id_evaluasi} - {self.status_konten}"
