@@ -1,12 +1,12 @@
 import os
 import json
+import hashlib
 import traceback
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from .models import PlatformMedsos, TargetPlatform, NilaiGayaKonten, User, AsetCigem, GayaKonten, RiwayatSpk
 from django.utils import timezone
 from django.core.cache import cache
-from google import genai
 
 def hitung_bobot_gap(gap):
     pemetaan = {
@@ -39,13 +39,40 @@ def _get_cached_platform_data():
     return data
 
 
-def _fallback_ide_konten(nama_aset, nama_gaya, platform_terbaik):
-    aset_text = nama_aset or 'aset Anda'
-    gaya_text = nama_gaya or 'gaya konten yang dipilih'
-    return (
-        f"Buat konten yang mengangkat {aset_text} dengan nuansa {gaya_text}. "
-        f"Gunakan hook yang singkat, soroti manfaat utama, dan ajak audiens untuk memberi respon atau menyimpan postingan ini."
+def _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbaik):
+    api_key_gemini = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
+    if not api_key_gemini:
+        raise RuntimeError('GEMINI_API_KEY belum dikonfigurasi di environment Railway')
+
+    prompt_text = (
+        f"Bertindaklah sebagai Tim Kreatif Social Media Cigem Creative.\n"
+        f"{custom_prompt}\n"
+        f"Sesuaikan ide ini khusus untuk algoritma platform {platform_terbaik}.\n"
+        f"Tuliskan maksimal 3 kalimat yang memancing interaksi audiens.\n\n"
+        f"ATURAN PENTING:\n"
+        f"1. LANGSUNG berikan isi caption atau kontennya saja.\n"
+        f"2. DILARANG KERAS menggunakan kata pengantar atau basa-basi.\n"
+        f"3. DILARANG menggunakan simbol format markdown."
     )
+
+    cache_key = 'gemini_ide:' + hashlib.sha256(prompt_text.encode('utf-8')).hexdigest()
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    from google import genai
+
+    client = genai.Client(api_key=api_key_gemini)
+    response = client.models.generate_content(
+        model=os.environ.get('GEMINI_MODEL', 'gemini-2.0-flash'),
+        contents=prompt_text
+    )
+    teks_ide = getattr(response, 'text', '').strip()
+    if not teks_ide:
+        raise RuntimeError('Gemini tidak mengembalikan konten')
+
+    cache.set(cache_key, teks_ide, 900)
+    return teks_ide
 
 
 def _build_ranking(dict_aktual, nilai_default=3):
@@ -166,21 +193,10 @@ def simpan_ide_konten(request):
             ranking_medsos = _build_ranking(dict_aktual, nilai_default=3)
             platform_terbaik = ranking_medsos[0]['nama_platform'] if ranking_medsos else 'Instagram'
             
-            api_key_gemini = os.environ.get('GEMINI_API_KEY')
-            teks_ide = _fallback_ide_konten(nama_aset, nama_gaya, platform_terbaik)
-
-            if api_key_gemini:
-                try:
-                    client = genai.Client(api_key=api_key_gemini)
-                    prompt_text = f"Bertindaklah sebagai Tim Kreatif Social Media Cigem Creative.\n{custom_prompt}\nSesuaikan ide ini khusus untuk algoritma platform {platform_terbaik}.\nTuliskan maksimal 3 kalimat yang memancing interaksi audiens.\n\nATURAN PENTING:\n1. LANGSUNG berikan isi caption atau kontennya saja.\n2. DILARANG KERAS menggunakan kata pengantar atau basa-basi.\n3. DILARANG menggunakan simbol format markdown."
-                    response = client.models.generate_content(
-                        model='gemini-3-flash-preview',
-                        contents=prompt_text
-                    )
-                    if getattr(response, 'text', None):
-                        teks_ide = response.text.strip()
-                except Exception:
-                    teks_ide = _fallback_ide_konten(nama_aset, nama_gaya, platform_terbaik)
+            try:
+                teks_ide = _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbaik)
+            except Exception as ai_error:
+                return JsonResponse({'status': 'error', 'error': str(ai_error)}, status=502)
             
             return JsonResponse({
                 'status': 'success', 
