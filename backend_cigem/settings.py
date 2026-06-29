@@ -7,7 +7,8 @@ load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-vh80^c#x4&(s)b)4wt6os&c(*3_b$5tbvq6%c1sp!q&e4&h*m-')
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
-ALLOWED_HOSTS = ['*', 'surpass-malt-tapioca.ngrok-free.dev', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['*', 'surpass-malt-tapioca.ngrok-free.dev', 'localhost', '127.0.0.1', 'cigemuniverse.up.railway.app']
+CSRF_TRUSTED_ORIGINS = ['https://cigemuniverse.up.railway.app']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
