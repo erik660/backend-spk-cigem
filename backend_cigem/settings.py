@@ -78,6 +78,8 @@ STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOW_ALL_ORIGINS = True
+# TAMBAHKAN BARIS INI DI PALING BAWAH:
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # CSRF and Cookie Settings for Railway Deployment
 CSRF_COOKIE_SECURE = False
