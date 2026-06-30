@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import traceback
+import requests
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from .models import PlatformMedsos, TargetPlatform, NilaiGayaKonten, User, AsetCigem, GayaKonten, RiwayatSpk
@@ -41,11 +42,11 @@ def _get_cached_platform_data():
 
 
 def _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbaik):
-    """Generate content ideas from AI only - no caching, no fallback, pure AI."""
-    api_key_gemini = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
-    if not api_key_gemini:
-        raise RuntimeError('GEMINI_API_KEY belum dikonfigurasi di environment Railway')
-    
+    """Generate content ideas using Hugging Face Inference API with caching and fallback."""
+    hf_token = os.environ.get('HUGGINGFACE_API_KEY')
+    if not hf_token:
+        raise RuntimeError('HUGGINGFACE_API_KEY belum dikonfigurasi di environment')
+
     prompt_text = (
         f"Bertindaklah sebagai Tim Kreatif Social Media Cigem Creative.\n"
         f"{custom_prompt}\n"
@@ -57,17 +58,55 @@ def _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbai
         f"3. DILARANG menggunakan simbol format markdown."
     )
 
-    from google import genai
-    client = genai.Client(api_key=api_key_gemini)
-    response = client.models.generate_content(
-        model=os.environ.get('GEMINI_MODEL', 'gemini-2.0-flash'),
-        contents=prompt_text
-    )
-    teks_ide = getattr(response, 'text', '').strip()
-    if not teks_ide:
-        raise RuntimeError('Gemini tidak mengembalikan konten')
-    
-    return teks_ide
+    # simple cache to reduce repeated API calls for identical prompts
+    cache_key = 'ide_' + hashlib.sha256(prompt_text.encode('utf-8')).hexdigest()
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    model_url = os.environ.get('HF_MODEL_URL', 'https://api-inference.huggingface.co/models/google/flan-t5-base')
+    headers = {"Authorization": f"Bearer {hf_token}", "Accept": "application/json"}
+    payload = {
+        "inputs": prompt_text,
+        "parameters": {
+            "max_new_tokens": 60,
+            "do_sample": True,
+            "temperature": float(os.environ.get('HF_TEMPERATURE', 0.8)),
+            "top_k": int(os.environ.get('HF_TOP_K', 50)),
+            "top_p": float(os.environ.get('HF_TOP_P', 0.95)),
+            "repetition_penalty": float(os.environ.get('HF_REP_PEN', 1.1))
+        },
+        "options": {"wait_for_model": True, "use_cache": False}
+    }
+
+    try:
+        r = requests.post(model_url, headers=headers, json=payload, timeout=20)
+        if r.status_code == 200:
+            out = r.json()
+            if isinstance(out, list) and out and 'generated_text' in out[0]:
+                teks = out[0]['generated_text'].strip()
+            elif isinstance(out, dict) and 'generated_text' in out:
+                teks = out['generated_text'].strip()
+            elif isinstance(out, str):
+                teks = out.strip()
+            else:
+                teks = json.dumps(out)[:1000]
+
+            if teks:
+                cache.set(cache_key, teks, 60)  # cache 60 seconds
+                return teks
+            raise RuntimeError('HF tidak mengembalikan konten')
+
+        # handle rate/quota errors with a friendly fallback
+        if r.status_code in (429, 503):
+            fallback = f"Ide sementara: {nama_aset} — sorot 1 manfaat utama dan ajak audiens bertanya."
+            cache.set(cache_key, fallback, 30)
+            return fallback
+        r.raise_for_status()
+    except requests.exceptions.RequestException:
+        fallback = f"Ide sementara: {nama_aset} — sorot 1 manfaat utama dan ajak audiens bertanya."
+        cache.set(cache_key, fallback, 30)
+        return fallback
 
 
 def _build_ranking(dict_aktual, nilai_default=3):
