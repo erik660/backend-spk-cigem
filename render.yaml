@@ -1,0 +1,18 @@
+# Minimal Render manifest. You can edit name/plan/repo as needed.
+services:
+  - type: web
+    name: backend-spk-cigem
+    env: python
+    plan: free
+    region: oregon
+    repo: https://github.com/erik660/backend-spk-cigem
+    branch: main
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: gunicorn backend_cigem.wsgi --log-file -
+    envVars:
+      - key: HUGGINGFACE_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: DEV_SQLITE
+        sync: false
