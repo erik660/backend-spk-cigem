@@ -33,17 +33,36 @@ export default async function handler(req, res) {
       options: { wait_for_model: true }
     };
 
-    const resp = await fetch(modelUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${hfToken}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload),
-    });
+    let resp;
+    try {
+      resp = await fetch(modelUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${hfToken}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (fetchError) {
+      console.error('Fetch error:', fetchError);
+      return res.status(500).json({ error: `Fetch failed: ${fetchError.message}` });
+    }
 
-    const out = await resp.json();
+    let out;
+    try {
+      out = await resp.json();
+    } catch (parseError) {
+      const text = await resp.text();
+      console.error('Response parse error:', parseError, 'body:', text);
+      return res.status(500).json({ error: `Invalid JSON response from Hugging Face: ${text}` });
+    }
+
+    if (!resp.ok) {
+      console.error('Hugging Face returned non-OK status', resp.status, out);
+      return res.status(resp.status).json({ error: out });
+    }
+
     let teks = '';
     if (Array.isArray(out) && out.length && out[0].generated_text) teks = out[0].generated_text;
     else if (out.generated_text) teks = out.generated_text;
