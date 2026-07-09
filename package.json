@@ -1,0 +1,10 @@
+{
+  "name": "backend-spk-cigem",
+  "private": true,
+  "scripts": {
+    "vercel-build": "echo \"Skipping build for Vercel serverless API\""
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
