@@ -8,4 +8,5 @@ urlpatterns = [
     path('rekomendasi_dinamis/', views.rekomendasi_dinamis, name='rekomendasi_dinamis'),
     path('simpan_ide/', views.simpan_ide_konten, name='simpan_ide_konten'),
     path('get_assets/', views.get_assets, name='get_assets'),
+    path('health/', views.health_check, name='health_check'),
 ]

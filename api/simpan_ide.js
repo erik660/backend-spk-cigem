@@ -1,4 +1,4 @@
-// Vercel Serverless function to generate content ideas using Hugging Face Inference API
+// Vercel Serverless function to generate content ideas using Groq API
 // Deploy this file under /api on Vercel (it will be available at /api/simpan_ide)
 
 export default async function handler(req, res) {
@@ -12,25 +12,26 @@ export default async function handler(req, res) {
     const nama_gaya = body.gaya || '';
     const custom_prompt = body.custom_prompt || `Buatkan ide konten tentang ${nama_aset} dengan gaya ${nama_gaya}`;
 
-    const hfToken = process.env.HUGGINGFACE_API_KEY;
-    if (!hfToken) return res.status(500).json({ error: 'HUGGINGFACE_API_KEY not configured' });
+    const { fetch } = require('undici');
+    // Memasukkan API key Groq yang Anda berikan
+    const groqToken = process.env.GROQ_API_KEY;
 
     const platform_terbaik = 'Instagram';
 
-    const prompt = `Anda adalah Tim Kreatif Social Media Cigem Creative.\n${custom_prompt}\nSesuaikan ide ini khusus untuk algoritma platform ${platform_terbaik}.\nKeluaran harus berupa valid JSON dengan struktur:{\n  "ideas": [{"title":..., "hook":..., "caption":..., "script":..., "hashtags": [...], "CTA":...}]\n} Buat maksimal 3 ide. Jangan sertakan teks penjelasan di luar JSON.`;
+    const prompt = `Anda adalah Tim Kreatif Social Media Senior di Cigem Creative (perusahaan konveksi & garment custom premium).\nArahan dari tim: ${custom_prompt}\nATURAN KRUSIAL KONVEKSI: Jika melibatkan aset alat/mesin, fokuskan pada keseruan proses produksi (ASMR/satisfying BTS) dan pembuktian kualitas kerapian orderan klien (Portofolio) agar calon klien terkesan dan percaya memesan produk custom di Cigem. Jangan pernah buat tutorial service/rawat mesin!\nSesuaikan ide ini khusus untuk algoritma platform ${platform_terbaik}.\nKeluaran harus berupa valid JSON dengan struktur:{\n  "ideas": [{"title":..., "hook":..., "caption":..., "script":..., "hashtags": [...], "CTA":...}]\n} Buat maksimal 3 ide. Jangan sertakan teks penjelasan di luar JSON.`;
 
-    const modelUrl = process.env.HF_MODEL_URL || 'https://api-inference.huggingface.co/models/google/flan-t5-large';
+    const modelUrl = 'https://api.groq.com/openai/v1/chat/completions';
     const payload = {
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 180,
-        do_sample: true,
-        temperature: parseFloat(process.env.HF_TEMPERATURE || '0.8'),
-        top_k: parseInt(process.env.HF_TOP_K || '50'),
-        top_p: parseFloat(process.env.HF_TOP_P || '0.95'),
-        repetition_penalty: parseFloat(process.env.HF_REP_PEN || '1.1')
-      },
-      options: { wait_for_model: true }
+      model: "llama-3.3-70b-versatile", // Model dari Meta di Groq (cepat, cerdas, dan aktif)
+      messages: [
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      response_format: { type: "json_object" }, // Memaksa format respons sebagai JSON
+      temperature: 0.8,
+      max_tokens: 1500
     };
 
     let resp;
@@ -38,8 +39,7 @@ export default async function handler(req, res) {
       resp = await fetch(modelUrl, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${hfToken}`,
-          Accept: 'application/json',
+          'Authorization': `Bearer ${groqToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload),
@@ -54,19 +54,19 @@ export default async function handler(req, res) {
       out = await resp.json();
     } catch (parseError) {
       const text = await resp.text();
-      console.error('Response parse error:', parseError, 'body:', text);
-      return res.status(500).json({ error: `Invalid JSON response from Hugging Face: ${text}` });
+      return res.status(500).json({ error: `Invalid JSON response from Groq: ${text}` });
     }
 
     if (!resp.ok) {
-      console.error('Hugging Face returned non-OK status', resp.status, out);
       return res.status(resp.status).json({ error: out });
     }
 
     let teks = '';
-    if (Array.isArray(out) && out.length && out[0].generated_text) teks = out[0].generated_text;
-    else if (out.generated_text) teks = out.generated_text;
-    else teks = typeof out === 'string' ? out : JSON.stringify(out);
+    if (out.choices && out.choices.length > 0 && out.choices[0].message) {
+      teks = out.choices[0].message.content;
+    } else {
+      teks = JSON.stringify(out);
+    }
 
     try {
       const parsed = JSON.parse(teks);

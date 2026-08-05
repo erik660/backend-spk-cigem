@@ -20,10 +20,8 @@ def hitung_bobot_gap(gap):
 
 def _get_cached_platform_data():
     cache_key = 'platform_ranking_data'
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
-
+    
+    # Force refresh dari database setiap kali dipanggil untuk memastikan fitur SPK selalu muncul
     platforms = list(PlatformMedsos.objects.all())
     target_items = list(
         TargetPlatform.objects.select_related('id_platform', 'id_kriteria').all()
@@ -42,72 +40,93 @@ def _get_cached_platform_data():
 
 
 def _generate_ide_konten_ai(nama_aset, nama_gaya, custom_prompt, platform_terbaik):
-    """Generate content ideas using Hugging Face Inference API with caching and fallback."""
-    hf_token = os.environ.get('HUGGINGFACE_API_KEY')
-    if not hf_token:
-        raise RuntimeError('HUGGINGFACE_API_KEY belum dikonfigurasi di environment')
+    """Generate dynamic structured content ideas using Groq API."""
+    groq_token = os.environ.get('GROQ_API_KEY')
+
+    konteks_gaya = ""
+    if "Edukasi" in nama_gaya:
+        konteks_gaya = "Karena ini gaya Edukasi, fokuskan untuk memberikan ilmu bermanfaat seperti penjelasan jenis bahan (cotton combed, dll), jenis jahitan, cara perawatan kaos, atau wawasan industri konveksi."
+    elif "Promosi" in nama_gaya or "Jualan" in nama_gaya:
+        konteks_gaya = "Karena ini gaya Promosi, fokuskan pada jualan langsung (direct selling). Tonjolkan kualitas, promo/diskon (jika relevan), kemudahan pemesanan, dan ajak audiens untuk segera order."
+    elif "Journey" in nama_gaya or "PO" in nama_gaya or "BTS" in nama_gaya:
+        konteks_gaya = "Karena ini gaya Journey/BTS, ceritakan alur produksi secara jujur dan menarik. Mulai dari pemotongan bahan, proses jahit/sablon, hingga packing pesanan klien. Buat audiens merasa ikut dalam perjalanan pembuatannya."
+    elif "Portofolio" in nama_gaya:
+        konteks_gaya = "Karena ini gaya Portofolio, fokuskan pada memamerkan hasil jadi pesanan klien (showcase). Perlihatkan detail kerapian jahitan, ketajaman sablon/bordir, dan betapa kerennya hasil akhir produk tersebut."
+    elif "Komedi" in nama_gaya or "Tren" in nama_gaya:
+        konteks_gaya = "Karena ini gaya Komedi/Tren, buat ide konten yang relate, lucu, atau mengikuti tren viral saat ini, tapi tetap nyambung dengan kehidupan konveksi atau custom baju."
+    else:
+        konteks_gaya = f"Sesuaikan ide konten ini sebaik mungkin dengan gaya: {nama_gaya}."
 
     prompt_text = (
-        f"Bertindaklah sebagai Tim Kreatif Social Media Cigem Creative.\n"
-        f"{custom_prompt}\n"
-        f"Sesuaikan ide ini khusus untuk algoritma platform {platform_terbaik}.\n"
-        f"Tuliskan maksimal 3 kalimat yang memancing interaksi audiens.\n\n"
-        f"ATURAN PENTING:\n"
-        f"1. LANGSUNG berikan isi caption atau kontennya saja.\n"
-        f"2. DILARANG KERAS menggunakan kata pengantar atau basa-basi.\n"
-        f"3. DILARANG menggunakan simbol format markdown."
+        f"Anda adalah Tim Kreatif Social Media Senior di Cigem Creative (perusahaan konveksi & garment custom premium).\n"
+        f"Aset perusahaan: {nama_aset}\n"
+        f"Gaya konten yang diinginkan: {nama_gaya}\n"
+        f"Arahan spesifik dari user: {custom_prompt}\n"
+        f"Platform target: {platform_terbaik}\n\n"
+        f"LINGKUP KONTEKS KONVEKSI KREATIF:\n"
+        f"1. Jika aset berupa Alat/Mesin (seperti Mesin Jahit, Sablon, dll), JANGAN PERNAH membuat tutorial mekanik! Audiens kami adalah calon pemesan baju custom.\n"
+        f"2. Gunakan kehadiran alat untuk memperlihatkan ASMR/satisfying production, memamerkan kerapian (Portofolio), dan membangun rasa percaya (trust).\n"
+        f"3. ARAHAN KHUSUS GAYA KONTEN: {konteks_gaya}\n\n"
+        f"Tugas Anda: Berikan maksimal 3 ide konten sosial media yang spesifik, sangat asik, kreatif, bervariasi, dan tidak kaku.\n"
+        f"Keluaran HARUS berupa valid JSON dengan struktur persis seperti ini:\n"
+        f"{{\n"
+        f"  \"ideas\": [\n"
+        f"    {{\n"
+        f"      \"title\": \"Judul Ide Konten\",\n"
+        f"      \"hook\": \"Kalimat pembuka (hook) 3 detik pertama yang memancing perhatian\",\n"
+        f"      \"caption\": \"Caption lengkap dan menarik untuk postingan media sosial\",\n"
+        f"      \"script\": \"Alur skrip video singkat atau deskripsi adegan visual\",\n"
+        f"      \"hashtags\": [\"#tag1\", \"#tag2\", \"#tag3\"],\n"
+        f"      \"CTA\": \"Kalimat Call to Action di akhir konten\"\n"
+        f"    }}\n"
+        f"  ]\n"
+        f"}}\n"
+        f"Jangan sertakan teks penjelasan apapun di luar format JSON tersebut."
     )
 
-    # simple cache to reduce repeated API calls for identical prompts
-    cache_key = 'ide_' + hashlib.sha256(prompt_text.encode('utf-8')).hexdigest()
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
-
-    model_url = os.environ.get('HF_MODEL_URL', 'https://api-inference.huggingface.co/models/google/flan-t5-base')
-    headers = {"Authorization": f"Bearer {hf_token}", "Accept": "application/json"}
-    payload = {
-        "inputs": prompt_text,
-        "parameters": {
-            "max_new_tokens": 60,
-            "do_sample": True,
-            "temperature": float(os.environ.get('HF_TEMPERATURE', 0.8)),
-            "top_k": int(os.environ.get('HF_TOP_K', 50)),
-            "top_p": float(os.environ.get('HF_TOP_P', 0.95)),
-            "repetition_penalty": float(os.environ.get('HF_REP_PEN', 1.1))
-        },
-        "options": {"wait_for_model": True, "use_cache": False}
-    }
-
     try:
-        r = requests.post(model_url, headers=headers, json=payload, timeout=20)
-        if r.status_code == 200:
-            out = r.json()
-            if isinstance(out, list) and out and 'generated_text' in out[0]:
-                teks = out[0]['generated_text'].strip()
-            elif isinstance(out, dict) and 'generated_text' in out:
-                teks = out['generated_text'].strip()
-            elif isinstance(out, str):
-                teks = out.strip()
-            else:
-                teks = json.dumps(out)[:1000]
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {groq_token}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": prompt_text}],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.8,
+            "max_tokens": 1500
+        }
+        
+        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        if resp.status_code == 200:
+            res_json = resp.json()
+            if 'choices' in res_json and len(res_json['choices']) > 0:
+                content = res_json['choices'][0]['message']['content']
+                parsed = json.loads(content)
+                if isinstance(parsed, dict) and 'ideas' in parsed:
+                    return parsed
+                elif isinstance(parsed, dict):
+                    return {"ideas": [parsed]}
+        else:
+            print(f"Groq API Error {resp.status_code}: {resp.text}")
+            
+    except Exception as e:
+        print(f"Error calling Groq API: {e}")
 
-            if teks:
-                cache.set(cache_key, teks, 60)  # cache 60 seconds
-                return teks
-            raise RuntimeError('HF tidak mengembalikan konten')
-
-        # handle rate/quota errors with a friendly fallback
-        if r.status_code in (429, 503):
-            fallback = f"Ide sementara: {nama_aset} — sorot 1 manfaat utama dan ajak audiens bertanya."
-            cache.set(cache_key, fallback, 30)
-            return fallback
-        r.raise_for_status()
-    except requests.exceptions.RequestException:
-        fallback = f"Ide sementara: {nama_aset} — sorot 1 manfaat utama dan ajak audiens bertanya."
-        cache.set(cache_key, fallback, 30)
-        return fallback
-
+    # Fallback yang terstruktur rapi jika AI gagal atau koneksi bermasalah
+    return {
+        "ideas": [
+            {
+                "title": f"Ide Kreatif: {nama_aset}",
+                "hook": f"Yakin sudah tahu cara terbaik memanfaatkan {nama_aset}?",
+                "caption": f"Dalam postingan kali ini, kita akan membahas rahasia di balik {nama_aset} dengan pendekatan gaya {nama_gaya} yang menarik dan mudah dipahami. Simak penjelasan lengkapnya!",
+                "script": f"1. [Visual: Sorot jelas {nama_aset} di 3 detik pertama]\n2. [Audio/VO]: Jelaskan keunggulan utama dengan gaya {nama_gaya}.\n3. [Outro]: Ajak audiens berinteraksi.",
+                "hashtags": [f"#{nama_aset.replace(' ', '')}", f"#{nama_gaya.replace(' ', '')}", f"#{platform_terbaik.replace(' ', '')}", "#CigemCreative"],
+                "CTA": "Bagikan pendapatmu atau tag temanmu di kolom komentar ya!"
+            }
+        ]
+    }
 
 def _build_ranking(dict_aktual, nilai_default=3):
     data = _get_cached_platform_data()
@@ -247,3 +266,9 @@ def simpan_ide_konten(request):
 def get_assets(request):
     assets = list(AsetCigem.objects.values('id_aset', 'kategori_aset', 'nama_aset'))
     return JsonResponse({'assets': assets}, safe=False)
+
+
+@csrf_exempt
+def health_check(request):
+    """Simple health check for deployment/platform probes."""
+    return JsonResponse({'status': 'ok', 'time': timezone.now().isoformat()})
